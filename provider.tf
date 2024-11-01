@@ -6,5 +6,5 @@ provider "oci" {
   user_ocid        = var.user_ocid
   fingerprint      = var.fingerprint
   region           = var.region
-  private_key      = filebase64decode(var.private_key)
+  private_key      = filebase64decode(var.private_key_path)
 }
