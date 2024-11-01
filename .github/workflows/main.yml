@@ -1,0 +1,66 @@
+name: Deploy Next.js to OKE
+
+on:
+  push:
+    branches:
+      - main  # Trigger on push to the main branch; adjust as necessary
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      OCI_REGION: <your-oci-region> # e.g., us-ashburn-1
+      NAMESPACE: <your-namespace>  # Replace with the namespace in your OKE cluster
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '16'  # Ensure compatibility with your Next.js app
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Build Next.js application
+        run: npm run build
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+
+      - name: Log in to OCI Container Registry
+        env:
+          OCI_USERNAME: ${{ secrets.OCI_USERNAME }}
+          OCI_PASSWORD: ${{ secrets.OCI_PASSWORD }}
+        run: |
+          echo "${OCI_PASSWORD}" | docker login -u "${OCI_USERNAME}" "https://<region-code>.ocir.io" --password-stdin
+
+      - name: Build and push Docker image
+        env:
+          IMAGE_TAG: <region-code>.ocir.io/<namespace>/<repo>:${{ github.sha }}
+        run: |
+          docker build -t $IMAGE_TAG .
+          docker push $IMAGE_TAG
+
+      - name: Set up OCI CLI
+        uses: oracle/oci-github-actions/setup-oci-cli@v1
+        with:
+          oci-api-key: ${{ secrets.OCI_API_KEY }}
+          oci-api-key-fingerprint: ${{ secrets.OCI_API_KEY_FINGERPRINT }}
+          oci-user-ocid: ${{ secrets.OCI_USER_OCID }}
+          oci-tenancy-ocid: ${{ secrets.OCI_TENANCY_OCID }}
+          oci-region: $OCI_REGION
+
+      - name: Configure Kubernetes credentials
+        run: |
+          oci ce cluster create-kubeconfig --cluster-id <cluster-id> --region $OCI_REGION --file $HOME/.kube/config --token-version 2.0.0
+
+      - name: Deploy to OKE
+        env:
+          IMAGE_TAG: <region-code>.ocir.io/<namespace>/<repo>:${{ github.sha }}
+        run: |
+          kubectl set image deployment/<deployment-name> <container-name>=$IMAGE_TAG --namespace $NAMESPACE
+          kubectl rollout status deployment/<deployment-name> --namespace $NAMESPACE
