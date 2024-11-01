@@ -1,66 +1,59 @@
-name: Deploy Next.js to OKE
+name: Provision OKE Cluster with Terraform
 
 on:
+  workflow_dispatch:
   push:
     branches:
       - main  # Trigger on push to the main branch; adjust as necessary
 
 jobs:
-  deploy:
+  terraform:
     runs-on: ubuntu-latest
 
     env:
-      OCI_REGION: <your-oci-region> # e.g., us-ashburn-1
-      NAMESPACE: <your-namespace>  # Replace with the namespace in your OKE cluster
+      OCI_TENANCY_OCID: ${{ secrets.OCI_TENANCY_OCID }}
+      OCI_USER_OCID: ${{ secrets.OCI_USER_OCID }}
+      OCI_FINGERPRINT: ${{ secrets.OCI_FINGERPRINT }}
+      OCI_PRIVATE_KEY: ${{ secrets.OCI_PRIVATE_KEY }}
+      OCI_REGION: ${{ secrets.OCI_REGION }}
+      COMPARTMENT_OCID: ${{ secrets.OCI_COMPARTMENT_OCID }}
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v2
 
-      - name: Set up Node.js
-        uses: actions/setup-node@v3
+      - name: Set up Terraform
+        uses: hashicorp/setup-terraform@v2
         with:
-          node-version: '16'  # Ensure compatibility with your Next.js app
+          terraform_version: 1.5.0  # Use the desired Terraform version
 
-      - name: Install dependencies
-        run: npm install
+      - name: Initialize Terraform
+        working-directory: ./terraform/oke
+        run: terraform init
 
-      - name: Build Next.js application
-        run: npm run build
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v2
-
-      - name: Log in to OCI Container Registry
+      - name: Plan Terraform
+        working-directory: ./terraform/oke
+        run: terraform plan -out=plan.out
         env:
-          OCI_USERNAME: ${{ secrets.OCI_USERNAME }}
-          OCI_PASSWORD: ${{ secrets.OCI_PASSWORD }}
-        run: |
-          echo "${OCI_PASSWORD}" | docker login -u "${OCI_USERNAME}" "https://<region-code>.ocir.io" --password-stdin
+          TF_VAR_tenancy_ocid: $OCI_TENANCY_OCID
+          TF_VAR_user_ocid: $OCI_USER_OCID
+          TF_VAR_fingerprint: $OCI_FINGERPRINT
+          TF_VAR_private_key: $OCI_PRIVATE_KEY
+          TF_VAR_region: $OCI_REGION
+          TF_VAR_compartment_ocid: $COMPARTMENT_OCID
 
-      - name: Build and push Docker image
+      - name: Apply Terraform
+        working-directory: ./terraform/oke
+        run: terraform apply -auto-approve plan.out
         env:
-          IMAGE_TAG: <region-code>.ocir.io/<namespace>/<repo>:${{ github.sha }}
-        run: |
-          docker build -t $IMAGE_TAG .
-          docker push $IMAGE_TAG
+          TF_VAR_tenancy_ocid: $OCI_TENANCY_OCID
+          TF_VAR_user_ocid: $OCI_USER_OCID
+          TF_VAR_fingerprint: $OCI_FINGERPRINT
+          TF_VAR_private_key: $OCI_PRIVATE_KEY
+          TF_VAR_region: $OCI_REGION
+          TF_VAR_compartment_ocid: $COMPARTMENT_OCID
 
-      - name: Set up OCI CLI
-        uses: oracle/oci-github-actions/setup-oci-cli@v1
-        with:
-          oci-api-key: ${{ secrets.OCI_API_KEY }}
-          oci-api-key-fingerprint: ${{ secrets.OCI_API_KEY_FINGERPRINT }}
-          oci-user-ocid: ${{ secrets.OCI_USER_OCID }}
-          oci-tenancy-ocid: ${{ secrets.OCI_TENANCY_OCID }}
-          oci-region: $OCI_REGION
-
-      - name: Configure Kubernetes credentials
+      - name: Output Kubernetes Config
+        working-directory: ./terraform/oke
         run: |
-          oci ce cluster create-kubeconfig --cluster-id <cluster-id> --region $OCI_REGION --file $HOME/.kube/config --token-version 2.0.0
-
-      - name: Deploy to OKE
-        env:
-          IMAGE_TAG: <region-code>.ocir.io/<namespace>/<repo>:${{ github.sha }}
-        run: |
-          kubectl set image deployment/<deployment-name> <container-name>=$IMAGE_TAG --namespace $NAMESPACE
-          kubectl rollout status deployment/<deployment-name> --namespace $NAMESPACE
+          terraform output kube_config > $HOME/.kube/config
